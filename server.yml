@@ -1,0 +1,117 @@
+---
+- hosts: 127.0.0.1
+  connection: local
+
+  vars:
+    pkg_dir: 'toinstall'
+    # Put drivers in {{config_dive}}/$WinpeDriver$ Windows will autoinstall it
+    drivers_dir: '$WinpeDriver$'
+  tasks:
+    - name: Create temporary work directory
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: iso_build_dir
+      register: iso_temp_root_build_dir
+    - name: Create temp iso root directory
+      ansible.builtin.file:
+        state: directory
+        path: '{{ iso_temp_root_build_dir.path }}/iso'
+    - name: Creating base configuration files for Windows (answerfile)
+      win_setup:
+        # destination (root dir) for config files, generate ISO file in next tasks
+        dest: '{{ iso_temp_root_build_dir.path }}/iso'
+        # SynchronousCommand
+        # run setup, first find entrypoint script path
+        first_logon_cmd: >-
+          powershell.exe -Command "$defaultEntryPoint = 'start.ps1';
+          foreach ($drive in [char]'A'..[char]'Z') {
+          $defaultFirstLogonCmd = 'powershell -NoExit -ExecutionPolicy Bypass -File '; 
+            $drive=[char]$drive;
+            $path = \"${drive}:\$defaultEntryPoint\"; 
+            if (Test-Path $path) { 
+                $defaultFirstLogonCmd="${defaultFirstLogonCmd} ${path};" 
+                & cmd /C $defaultFirstLogonCmd ; exit 0 
+              } 
+          }
+        # dism /Get-WimInfo /WimFile:sources\install.wim, 2 - Windows Server 2022 Standard Evaluation с рабочим столом
+        image_index: "2"
+        # Change credentials after ansible installation if needed
+        admin_password: "Passw0rd!"
+        user_name: "IEUser"
+        user_password: "Passw0rd!"
+        computer_name: "MainServer"
+        network_interface: "52-54-00-56-F7-E1"
+        static_ip_address_cidr: "192.168.122.2/24"
+        static_route_cidr: "0.0.0.0/0"
+        static_gateway_ip: "192.168.122.1"
+        static_dns_server: "127.0.0.1"
+        static_secondary_dns_server: "1.1.1.1"
+
+    - name: Create pkg directory
+      ansible.builtin.file:
+        state: directory
+        path: '{{ iso_temp_root_build_dir.path }}/iso/{{pkg_dir}}'
+    - name: Copy start.ps1 to config_iso
+      ansible.builtin.copy:
+          src: 'pwsh/start.ps1'
+          dest: '{{ iso_temp_root_build_dir.path }}/iso/start.ps1'
+    - name: Copy promote-domain-controller.ps1 to config_iso
+      ansible.builtin.copy:
+          src: 'pwsh/promote-domain-controller.ps1'
+          dest: '{{ iso_temp_root_build_dir.path }}/iso/{{pkg_dir}}/promote-domain-controller.ps1'
+    - name: Copy create-test-user.ps1 to config_iso
+      ansible.builtin.copy:
+          src: 'pwsh/create-test-user.ps1'
+          dest: '{{ iso_temp_root_build_dir.path }}/iso/{{pkg_dir}}/create-test-user.ps1'
+    - name: Copy setup-dhcp.ps1 to config_iso
+      ansible.builtin.copy:
+          src: 'pwsh/setup-dhcp.ps1'
+          dest: '{{ iso_temp_root_build_dir.path }}/iso/{{pkg_dir}}/setup-dhcp.ps1'
+    - name: Download Virtio Drivers
+      ansible.builtin.get_url:
+        url: >-
+          https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.262-2/virtio-win-0.1.262.iso
+        dest: '{{ iso_temp_root_build_dir.path }}/virtio-win.iso'
+        force: true
+        checksum: sha256:bdc2ad1727a08b6d8a59d40e112d930f53a2b354bdef85903abaad896214f0a3
+    - name: Create drivers directory
+      ansible.builtin.file:
+        state: directory
+        path: '{{ iso_temp_root_build_dir.path }}/iso/{{drivers_dir}}'
+    - name: Extract virtio drivers
+      community.general.iso_extract:
+        image: '{{ iso_temp_root_build_dir.path }}/virtio-win.iso'
+        dest: '{{ iso_temp_root_build_dir.path }}/iso/{{drivers_dir}}'
+        files:
+          - vioscsi/2k22/amd64/vioscsi.cat
+          - vioscsi/2k22/amd64/vioscsi.inf
+          - vioscsi/2k22/amd64/vioscsi.pdb
+          - vioscsi/2k22/amd64/vioscsi.sys
+          - viostor/2k22/amd64/viostor.cat
+          - viostor/2k22/amd64/viostor.inf
+          - viostor/2k22/amd64/viostor.sys
+          - viostor/2k22/amd64/viostor.pdb
+          - NetKVM/2k22/amd64/netkvm.cat
+          - NetKVM/2k22/amd64/netkvm.inf
+          - NetKVM/2k22/amd64/netkvm.pdb
+          - NetKVM/2k22/amd64/netkvm.sys
+          - NetKVM/2k22/amd64/netkvmco.exe
+          - NetKVM/2k22/amd64/netkvmco.pdb
+          - NetKVM/2k22/amd64/netkvmp.exe
+          - NetKVM/2k22/amd64/netkvmp.pdb
+    - name: Create an windows config ISO file with Joliet support
+    # default_entry_point = "%s\\start.ps1" % default_config_drive
+    # default_main_code_file = "%s\\main.cs" % default_config_drive
+    # default_install_json_path = "%s\\install.json" % default_config_drive
+      community.general.iso_create:
+        src_files:
+          - '{{ iso_temp_root_build_dir.path }}/iso/{{drivers_dir}}'
+          - '{{ iso_temp_root_build_dir.path }}/iso/{{pkg_dir}}'
+          - '{{ iso_temp_root_build_dir.path }}/iso/start.ps1'
+          - '{{ iso_temp_root_build_dir.path }}/iso/main.cs'
+          - '{{ iso_temp_root_build_dir.path }}/iso/install.json'
+          - '{{ iso_temp_root_build_dir.path }}/iso/autounattend.xml'
+        dest_iso: '{{ iso_output_path }}'
+        interchange_level: 4
+        joliet: 3
+        vol_ident: WIN_AUTOINSTALL

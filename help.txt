@@ -1,0 +1,28 @@
+
+######################################################
+Run on host to use systemd inside container, see https://developers.redhat.com/blog/2019/04/24/how-to-run-systemd-in-a-container
+setsebool -P container_manage_cgroup true
+
+Start container with:
+USERID=$(id -u);  \
+    podman run --rm -it --privileged\
+  --security-opt label=disable\
+  --cap-add=sys_admin,net_admin,net_raw,mknod,sys_ptrace\
+  --device=/dev/fuse\
+  --device=/dev/urandom\
+  --device=/dev/kvm\
+  --device=/dev/dri\
+  --device=/dev/net/tun\
+  -e XDG_RUNTIME_DIR=/run/user/$USERID\
+  -e WAYLAND_DISPLAY=wayland-0\
+  -v /run/user/$USERID/wayland-0:/tmp/wayland-0:z\
+  -v $PWD/iso:/iso\
+  --name "$NAME" "$IMAGE_NAME"
+
+Execute this on different terminal :
+podman exec -it "$NAME" bash
+
+Execute this command on the host after working with the container :
+sudo chown $USER /run/user/$USERID/wayland-0;
+sudo chcon unconfined_u:object_r:user_tmp_t:s0 /run/user/$USERID/wayland-0
+######################################################
